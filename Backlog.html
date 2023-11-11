@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+    <title>BackLogs</title>
+
+    <style>
+        body {
+            background-color: black;
+            font-family: monospace;
+            color: #00FF00;
+            margin: 0;
+            padding: 0;
+        }
+
+        #terminal-container {
+            position: relative;
+            height: 100vh;
+        }
+
+        #terminal {
+            width: 80%;
+            margin: 0 auto;
+            border: 1px solid black;
+            padding: 10px;
+            background-color: black;
+            color: #00FF00;
+            position: absolute;
+            top: 0;
+            bottom: 50px;
+            overflow: auto;
+        }
+
+        #input {
+            width: 80%;
+            padding: 10px;
+            background-color: black;
+            color: #00FF00;
+            border: none;
+            border: 0px solid #00FF00;
+            position: absolute;
+            bottom: 0;
+            caret-color: #00FF00;
+            outline: none;
+        }
+
+        @keyframes cursor-blink {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0;
+            }
+        }
+
+#terminal::-webkit-scrollbar {
+    width: 6px;
+}
+
+#terminal::-webkit-scrollbar-thumb {
+    background-color: black;
+}
+
+#terminal::-webkit-scrollbar-track {
+    background-color: black;
+}
+
+/* Adicione ou modifique esses estilos no seu CSS existente */
+.copy-button {
+    background-color: black;
+    color: white;
+    font-size: 80%;
+    border: none;
+    padding: 3px;
+    margin-left: 5px; /* Ajuste o espaçamento entre o botão e o texto */
+    cursor: pointer;
+}
+
+    </style>
+</head>
+   
+<body>
+   
+    <div id="terminal-container">
+        <div id="terminal"></div>
+        <input type="text" id="input" autofocus>
+    </div>
+    
+      <h5>Últimas Notícias</h5>
+    <div id="noticias"></div>
+    
+    
+    <script>
+        const terminal = document.getElementById("terminal");
+        const input = document.getElementById("input");
+        const scheduledEvents = [];
+        const lastCommands = [];
+
+       
+
+
+        // Carrega o conteúdo do terminal do armazenamento local (se existir)
+        if (localStorage.getItem("terminalContent")) {
+            terminal.innerHTML = localStorage.getItem("terminalContent");
+        }
+
+		       
+           
+     
+         let commandIndex = 0;
+         let awaitingDateInput = false;
+        
+        
+
+       input.addEventListener("keydown", function(event) {
+    if (event.key === "ArrowUp") {
+        commandIndex = Math.max(0, commandIndex - 1);
+        input.value = lastCommands[commandIndex] || "";
+    } else if (event.key === "ArrowDown") {
+        commandIndex = Math.min(lastCommands.length - 1, commandIndex + 1); // Ajuste para limitar o valor máximo
+        input.value = lastCommands[commandIndex] || "";
+    } else if (event.key === "Enter") {
+        const command = input.value;
+        input.value = "";
+        
+        if (command === "help") {
+            displayHelpManual();
+        }
+
+        else if (command.startsWith("sched ")) {
+            const match = command.match(/"([^"]+)" (\d{2}\/\d{2}\/\d{4})/);
+            if (match) {
+                const description = match[1];
+                const date = match[2];
+                scheduleEvent(description, date);
+            } else {
+                writeToTerminal("$ Comando inválido. Use o formato correto: sched \"descrição\" dd/mm/aaaa");
+            }
+        } else if (command.startsWith("sched?")) {
+            showAllScheduledEvents();
+        } else if (command.startsWith("sum ")) {
+            calculateSum(command.substring(4));
+        } else if (command === "del all") {
+            clearTerminal();
+            writeToTerminal(" ");
+        } else if (command.startsWith("del ")) {
+            deleteLine(command.substring(4));
+        } else if (command.startsWith("save ")) {
+            saveToTextFile(command.substring(5));
+        } else if (command.startsWith("end ")) {
+            colorTextGrey(command);
+        } else if (command.startsWith("red ")) {
+            colorTextRed(command);
+        } else if (command.startsWith("date")) {
+         awaitingDateInput = true;
+         writeToTerminal("$ Insira o ano e o mês (por exemplo, 'YYYY MM'):");
+        } else if (awaitingDateInput) {
+            const [year, month] = command.split(" ");
+             displayCustomCalendar(year, month);
+             awaitingDateInput = false;
+            
+        } else {
+    writeToTerminal(`${command}`);
+}
+        
+        
+         processCommand(command); // Adiciona o comando aos últimos comandos
+        commandIndex = lastCommands.length; // Atualiza o índice para apontar para o último comando
+        
+    }
+});
+
+        
+
+function processCommand(command) {
+    lastCommands.push(command);
+    if (lastCommands.length > 5) {
+        lastCommands.shift();
+    }
+    commandIndex = lastCommands.length; // Atualiza o índice para apontar para o último comando
+    // Resto do código do seu processo de comandos...
+}
+
+        
+        
+function scheduleEvent(description, date) {
+    scheduledEvents.push({ description, date });
+    writeToTerminal(`$ Evento agendado: ${description} em ${date}`);
+    localStorage.setItem("terminalContent", terminal.innerHTML);
+}
+
+function showAllScheduledEvents() {
+    if (scheduledEvents.length === 0) {
+        writeToTerminal("$ Não há eventos agendados.");
+    } else {
+        writeToTerminal("$ Eventos agendados:");
+        scheduledEvents.forEach(event => {
+            writeToTerminal(`$ ${event.description} em ${event.date}`);
+        });
+    }
+}
+        function writeToTerminal(text) {
+    terminal.innerHTML += `${text}<button class="copy-button" onclick="copyText(this)"></button><br>`;
+    terminal.scrollTop = terminal.scrollHeight;
+    // Salva o conteúdo do terminal no armazenamento local
+    localStorage.setItem("terminalContent", terminal.innerHTML);
+}
+
+
+        function calculateSum(expression) {
+            try {
+                const result = Function(`'use strict'; return (${expression})`)();
+                writeToTerminal(`$ Resultado: ${expression} = ${result}`);
+            } catch (error) {
+                writeToTerminal(`$ Erro: ${error}`);
+            }
+        }
+
+        function deleteLine(keyword) {
+            const lines = terminal.innerHTML.split("<br>");
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes(keyword)) {
+                    lines.splice(i, 1);
+                    break; // Para apagar apenas uma linha
+                }
+            }
+            terminal.innerHTML = lines.join("<br>");
+            localStorage.setItem("terminalContent", terminal.innerHTML);
+        }
+
+        function clearTerminal() {
+            terminal.innerHTML = "";
+            localStorage.setItem("terminalContent", "");
+        }     
+         document.addEventListener("keydown", function(event) {
+
+        if (event.key === "F2") {
+            insertDateTime();
+           }
+                 });
+             
+               function insertDateTime() {
+    const now = new Date();
+    const formattedDate = `${(now.getDate() < 10 ? '0' : '') + now.getDate()}/${((now.getMonth() + 1) < 10 ? '0' : '') + (now.getMonth() + 1)} ${now.getHours()}:${(now.getMinutes() < 10 ? '0' : '') + now.getMinutes()}`;
+    input.value += formattedDate;
+}
+
+function colorTextGrey(command) {
+    const searchText = command.substring(4); // Extract the text after "end "
+    const lines = terminal.innerHTML.split("<br>");
+
+    lines.forEach((line, index) => {
+        if (line.includes(searchText)) {
+            lines[index] = `<span style="color: grey">${line}</span>`;
+        }
+    });
+
+    terminal.innerHTML = lines.join("<br>");
+    localStorage.setItem("terminalContent", terminal.innerHTML);
+}
+
+
+function colorTextRed(command) {
+    const searchText = command.substring(4); // Extrai o texto após o comando "pri"
+    const lines = terminal.innerHTML.split("<br>");
+
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(searchText)) {
+            lines[i] = `<span style="color: red">${lines[i]}</span>`;
+        }
+    }
+
+    terminal.innerHTML = lines.join("<br>");
+    localStorage.setItem("terminalContent", terminal.innerHTML);
+}
+
+
+function writeToTerminal(text) {
+    terminal.innerHTML += `${text}<button class="copy-button" onclick="copyText(this)">_<c></button><br>`;
+    terminal.scrollTop = terminal.scrollHeight;
+    // Salva o conteúdo do terminal no armazenamento local
+    localStorage.setItem("terminalContent", terminal.innerHTML);
+}
+
+function copyText(button) {
+    const textToCopy = button.previousSibling.nodeValue.trim().replace(/^\$/, ''); // Remove o "$" do início da linha
+    navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+            alert('Conteúdo copiado para a área de transferência!');
+        })
+        .catch(err => {
+            console.error('Falha ao copiar o texto: ', err);
+        });
+}
+
+        function saveToTextFile(fileName) {
+    const textContent = terminal.innerText;
+    const blob = new Blob([textContent], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    
+    if (fileName) {
+        a.download = `${fileName}.txt`;
+    } else {
+        a.download = "terminal_output.txt";
+    }
+    
+    a.click();
+}
+
+function displayCustomCalendar(year, month) {
+            const customCalendar = getCustomCalendar(year, month);
+            writeToTerminal(`$ Calendário Personalizado:\n${customCalendar}`);
+        }
+
+        function getCustomCalendar(year, month) {
+    const monthString = `${year}-${month < 10 ? '0' : ''}${month}`;
+    let calendar = `<table border="1" style="border-collapse: collapse;">
+                     <tr><th colspan="7">${monthString}</th></tr>
+                     <tr>
+                       <th class="day-header">DOM</th>
+                       <th class="day-header">SEG</th>
+                       <th class="day-header">TER</th>
+                       <th class="day-header">QUA</th>
+                       <th class="day-header">QUI</th>
+                       <th class="day-header">SEX</th>
+                       <th class="day-header">SÁB</th>
+                     </tr>`;
+
+    const firstDay = new Date(year, month - 1, 1);
+    const dayOfWeek = firstDay.getDay();
+    const daysInMonth = new Date(year, month, 0).getDate();
+    
+    let currentDay = 1;
+    let row = '<tr>';
+
+    // Preenche os espaços vazios até o primeiro dia da semana
+    for (let i = 0; i < dayOfWeek; i++) {
+        row += '<td></td>';
+    }
+
+    for (let i = dayOfWeek; i < 7; i++) {
+        if (currentDay <= daysInMonth) {
+            row += `<td>${currentDay}</td>`;
+            currentDay++;
+        }
+    }
+
+    row += '</tr>';
+    calendar += row;
+
+    while (currentDay <= daysInMonth) {
+        row = '<tr>';
+        for (let i = 0; i < 7; i++) {
+            if (currentDay <= daysInMonth) {
+                row += `<td>${currentDay}</td>`;
+                currentDay++;
+            }
+        }
+        row += '</tr>';
+        calendar += row;
+    }
+
+    calendar += '</table>';
+    return calendar;
+}
+
+function displayHelpManual() {
+    const helpManual = `
+        <strong>Manual de Comandos:</strong><br>
+        <strong>sched "descrição" dd/mm/aaaa</strong> - Agenda um evento na data especificada<br>
+        <strong>sched?</strong> - Mostra todos os eventos agendados<br>
+        <strong>sum expressão</strong> - Calcula uma expressão matemática<br>
+        <strong>del all</strong> - Apaga todo o conteúdo do terminal<br>
+        <strong>del palavra</strong> - Apaga a linha que contenha a palavra especificada<br>
+        <strong>save nome</strong> - Salva o conteúdo do terminal em um arquivo de texto<br>
+        <strong>end palavra</strong> - Colore o texto que contenha a palavra especificada em cinza<br>
+        <strong>pri palavra</strong> - Colore o texto que contenha a palavra especificada em vermelho<br>
+        <strong>date</strong> - Mostra calendário de mês e ano informado<br>
+        <strong>f2</strong> - Insere a data atual no formato 'dd/mm hh:mm' antes de algum texto digitado<br>
+        <strong>help</strong> - Mostra este manual de comandos<br>
+    `;
+
+    writeToTerminal(helpManual);
+}
+
+        const scheduledEventsKey = "scheduledEvents";
+
+// Carrega os eventos agendados do armazenamento local (se existirem)
+const storedScheduledEvents = localStorage.getItem(scheduledEventsKey);
+if (storedScheduledEvents) {
+    scheduledEvents.push(...JSON.parse(storedScheduledEvents));
+}
+
+function scheduleEvent(description, date) {
+    scheduledEvents.push({ description, date });
+    writeToTerminal(`$ Evento agendado: ${description} em ${date}`);
+    updateScheduledEventsInLocalStorage();
+}
+
+function updateScheduledEventsInLocalStorage() {
+    localStorage.setItem(scheduledEventsKey, JSON.stringify(scheduledEvents));
+}
+        
+
+
+
+
+
+ function fetchAndDisplayNews() {
+            const feedURL = 'https://g1.globo.com/dynamo/rss2.xml';
+
+            fetch(feedURL)
+                .then(response => response.text())
+                .then(str => new DOMParser().parseFromString(str, 'text/xml'))
+                .then(data => {
+                    const items = data.querySelectorAll('item');
+                    const noticias = document.getElementById('noticias');
+
+                    let html = '<ul>';
+
+                    items.forEach(item => {
+                        const title = item.querySelector('title').textContent;
+                        const link = item.querySelector('link').textContent;
+                        html += `<li><a href="${link}">${title}</a></li>`;
+                    });
+
+                    html += '</ul>';
+                    noticias.innerHTML = html;
+                })
+                .catch(err => console.error('Erro ao buscar o feed RSS', err));
+        }
+
+        // Carrega inicialmente
+        fetchAndDisplayNews();
+
+        // Atualiza a cada 5 minutos (300.000 milissegundos)
+        setInterval(fetchAndDisplayNews, 300000);
+
+
+ 
+ 
+        
+        
+        
+        
+        
+    </script>
+
+
+
+</body>
+</html>
