@@ -409,7 +409,7 @@ function updateScheduledEventsInLocalStorage() {
 
 
  function fetchAndDisplayNews() {
-            const feedURL = 'https://agenciabrasil.ebc.com.br/rss/ultimasnoticias/feed.xml';
+            const feedURL = 'https://rss.uol.com.br/feed/noticias.xml';
 
             fetch(feedURL)
                 .then(response => response.text())
@@ -423,7 +423,7 @@ function updateScheduledEventsInLocalStorage() {
                     items.forEach(item => {
                         const title = item.querySelector('title').textContent;
                         const link = item.querySelector('link').textContent;
-                        html += `<li><a href="${link}">${title}</a></li>`;
+                         html += `<li><a href="${link}" target="_blank" style="color: white;">${title}</a></li>`;
                     });
 
                     html += '</ul>';
