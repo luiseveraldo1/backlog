@@ -405,38 +405,33 @@ function updateScheduledEventsInLocalStorage() {
         
 
 
+function fetchAndDisplayNews() {
+    const feedURL = 'https://g1.globo.com/dynamo/rss2.xml';
+
+    fetch(feedURL)
+        .then(response => response.text())
+        .then(str => new DOMParser().parseFromString(str, 'text/xml'))
+        .then(data => {
+            const items = data.querySelectorAll('item');
+            const noticias = document.getElementById('noticias');
+
+            let html = '<ul>';
+
+            items.forEach(item => {
+                const title = item.querySelector('title').textContent;
+                const link = item.querySelector('link').textContent;
+                html += `<li><a href="${link}" target="_blank" style="color: white;">${title}</a></li>`;
+            });
+
+            html += '</ul>';
+            noticias.innerHTML = html;
+        })
+        .catch(err => console.error('Erro ao buscar o feed RSS', err));
+}
 
 
 
- function fetchAndDisplayNews() {
-            const feedURL = 'https://res.stj.jus.br/hrestp-c-portalp/RSS.xml';
-
-            fetch(feedURL)
-                .then(response => response.text())
-                .then(str => new DOMParser().parseFromString(str, 'text/xml'))
-                .then(data => {
-                    const items = data.querySelectorAll('item');
-                    const noticias = document.getElementById('noticias');
-
-                    let html = '<ul>';
-
-                    items.forEach(item => {
-                        const title = item.querySelector('title').textContent;
-                        const link = item.querySelector('link').textContent;
-                        html += `<li><a href="${link}">${title}</a></li>`;
-                    });
-
-                    html += '</ul>';
-                    noticias.innerHTML = html;
-                })
-                .catch(err => console.error('Erro ao buscar o feed RSS', err));
-        }
-
-        // Carrega inicialmente
-        fetchAndDisplayNews();
-
-        // Atualiza a cada 5 minutos (300.000 milissegundos)
-        setInterval(fetchAndDisplayNews, 300000);
+ 
 
 
  
