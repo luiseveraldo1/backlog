@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>BackLogs | Work & Study</title>
+    <style id="theme-style">
+        /* CSS controlado pelo JavaScript para suportar os 3 Skins */
+    </style>
+</head>
+<body>
+
+    <div id="terminal-container">
+        <div id="app-header" style="padding: 10px 0 0 7.5%; font-weight: bold; font-size: 20px; letter-spacing: 2px;">
+            BACKLOGS <span id="app-subtitle" style="font-weight: normal; font-size: 12px;">| Work & Study</span>
+        </div>
+        <div id="terminal"></div>
+        <input type="text" id="input" autofocus placeholder="Digite help para ver os comandos...">
+    </div>
+
+    <h5 id="news-title">Últimas Notícias - CNN Brasil</h5>
+    <div id="noticias">Sincronizando feed...</div>
+
+    <script>
+        const terminal = document.getElementById("terminal");
+        const input = document.getElementById("input");
+        const styleTag = document.getElementById("theme-style");
+        const scheduledEvents = JSON.parse(localStorage.getItem("scheduledEvents") || "[]");
+        const lastCommands = [];
+        let commandIndex = 0;
+        let awaitingDateInput = false;
+
+        // --- CONFIGURAÇÃO DE SKINS ---
+        const skins = {
+            1: { bg: "#F0F2f5", container: "white", text: "#2c3e50", primary: "#1a2a6c", inputBg: "#f8f9fa", border: "#dee2e6", lineBg: "#fafafa", marker: "#006400" },
+            2: { bg: "#1e1e1e", container: "#252526", text: "#d4d4d4", primary: "#4fc1ff", inputBg: "#333333", border: "#444444", lineBg: "#2d2d2d", marker: "#008b8b" },
+            3: { bg: "black", container: "#0a0a0a", text: "#00FF00", primary: "#00FF00", inputBg: "#111", border: "#00FF00", lineBg: "#050505", marker: "#00FF00" }
+        };
+
+        function applySkin(id) {
+            const s = skins[id] || skins[1];
+            styleTag.innerHTML = `
+                body { background-color: ${s.bg}; font-family: 'Segoe UI', Tahoma, sans-serif; color: ${s.text}; margin: 0; padding: 0; transition: 0.3s; }
+                #terminal-container { position: relative; height: 60vh; background-color: ${s.container}; border-bottom: 3px solid ${s.primary}; }
+                #app-header { color: ${s.primary}; }
+                #app-subtitle { color: ${s.text}; opacity: 0.7; }
+                #terminal { width: 85%; margin: 0 auto; padding: 20px; background-color: ${s.container}; color: ${s.text}; position: absolute; top: 45px; bottom: 60px; overflow: auto; font-size: 14px; }
+                #input { width: 85%; padding: 15px; background-color: ${s.inputBg}; color: ${s.primary}; border: none; border-top: 1px solid ${s.border}; position: absolute; bottom: 0; left: 7.5%; outline: none; font-weight: bold; }
+                h5 { margin-left: 7.5%; color: ${s.primary}; margin-top: 30px; font-size: 18px; border-left: 5px solid ${s.primary}; padding-left: 10px; }
+                .line-item { border-bottom: 1px solid ${s.border}; padding: 8px 0; display: flex; align-items: center; justify-content: space-between; border-left: 8px solid ${s.marker}; padding-left: 15px; margin-bottom: 5px; background-color: ${s.lineBg}; }
+                .line-text { flex-grow: 1; margin-right: 10px; }
+                .action-btn { background-color: ${s.inputBg}; color: ${s.primary}; font-size: 10px; border: 1px solid ${s.border}; padding: 4px 8px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 4px; }
+                #noticias { width: 85%; margin: 0 auto; padding-bottom: 50px; }
+                #noticias li { background: ${s.container}; margin-bottom: 10px; padding: 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+                #noticias a { color: ${s.primary}; text-decoration: none; font-weight: bold; }
+            `;
+            localStorage.setItem("selectedSkin", id);
+        }
+
+        // --- INICIALIZAÇÃO ---
+        if (localStorage.getItem("terminalContent")) terminal.innerHTML = localStorage.getItem("terminalContent");
+        applySkin(localStorage.getItem("selectedSkin") || 1);
+
+        input.addEventListener("keydown", function(event) {
+            if (event.key === "ArrowUp") {
+                commandIndex = Math.max(0, commandIndex - 1);
+                input.value = lastCommands[commandIndex] || "";
+            } else if (event.key === "ArrowDown") {
+                commandIndex = Math.min(lastCommands.length, commandIndex + 1);
+                input.value = lastCommands[commandIndex] || "";
+            } else if (event.key === "Enter") {
+                const command = input.value;
+                input.value = "";
+                if (command.trim() === "") return;
+
+                if (awaitingDateInput) {
+                    const [year, month] = command.split(" ");
+                    displayCustomCalendar(year, month);
+                    awaitingDateInput = false;
+                } else {
+                    handleCommand(command);
+                }
+                lastCommands.push(command);
+                commandIndex = lastCommands.length;
+            }
+        });
+
+        // --- PROCESSAMENTO DE COMANDOS (ORIGINAIS + NOVOS) ---
+        function handleCommand(command) {
+            if (command === "help") {
+                displayHelpManual();
+            } else if (command.startsWith("skin ")) {
+                applySkin(command.split(" ")[1]);
+            } else if (command.startsWith("sched ")) {
+                const match = command.match(/"([^"]+)" (\d{2}\/\d{2}\/\d{4})/);
+                if (match) {
+                    scheduleEvent(match[1], match[2]);
+                } else {
+                    writeToTerminal("$ Comando inválido. Use: sched \"descrição\" dd/mm/aaaa");
+                }
+            } else if (command === "sched?") {
+                showAllScheduledEvents();
+            } else if (command.startsWith("sum ")) {
+                calculateSum(command.substring(4));
+            } else if (command === "del all") {
+                clearTerminal();
+            } else if (command.startsWith("del ")) {
+                deleteLineByKeyword(command.substring(4));
+            } else if (command.startsWith("save ")) {
+                saveToTextFile(command.substring(5));
+            } else if (command.startsWith("end ")) {
+                colorText(command.substring(4), "grey");
+            } else if (command.startsWith("red ")) {
+                colorText(command.substring(4), "red");
+            } else if (command === "date") {
+                awaitingDateInput = true;
+                writeToTerminal("$ Insira o ano e o mês (Ex: 2026 04):");
+            } else {
+                writeToTerminal(command);
+            }
+        }
+
+        // --- FUNÇÕES DE NÚCLEO ---
+        function writeToTerminal(text) {
+            const div = document.createElement("div");
+            div.className = "line-item";
+            div.innerHTML = `
+                <span class="line-text">${text}</span>
+                <div class="btn-group">
+                    <button class="action-btn" onclick="copyLine(this)">C</button>
+                    <button class="action-btn" onclick="editLine(this)">E</button>
+                    <button class="action-btn" onclick="deleteThisLine(this)" style="color:red">X</button>
+                </div>
+            `;
+            terminal.appendChild(div);
+            terminal.scrollTop = terminal.scrollHeight;
+            saveContent();
+        }
+
+        function saveContent() { localStorage.setItem("terminalContent", terminal.innerHTML); }
+
+        function clearTerminal() {
+            terminal.innerHTML = "";
+            saveContent();
+        }
+
+        // Recuperado: Deletar por palavra específica
+        function deleteLineByKeyword(keyword) {
+            const lines = Array.from(terminal.querySelectorAll('.line-item'));
+            for (let line of lines) {
+                if (line.innerText.includes(keyword)) {
+                    line.remove();
+                    break;
+                }
+            }
+            saveContent();
+        }
+
+        // Recuperado: Colorir texto específico (end/red)
+        function colorText(keyword, color) {
+            const lines = terminal.querySelectorAll('.line-text');
+            lines.forEach(span => {
+                if (span.innerText.includes(keyword)) {
+                    span.style.color = color;
+                }
+            });
+            saveContent();
+        }
+
+        function calculateSum(expression) {
+            try {
+                const result = Function(`'use strict'; return (${expression})`)();
+                writeToTerminal(`$ Resultado: ${expression} = ${result}`);
+            } catch (error) { writeToTerminal(`$ Erro: ${error}`); }
+        }
+
+        // --- AGENDAMENTOS ---
+        function scheduleEvent(description, date) {
+            scheduledEvents.push({ description, date });
+            writeToTerminal(`$ Evento agendado: ${description} em ${date}`);
+            localStorage.setItem("scheduledEvents", JSON.stringify(scheduledEvents));
+        }
+
+        function showAllScheduledEvents() {
+            if (scheduledEvents.length === 0) {
+                writeToTerminal("$ Não há eventos agendados.");
+            } else {
+                writeToTerminal("$ Eventos agendados:");
+                scheduledEvents.forEach(event => {
+                    writeToTerminal(`$ ${event.description} em ${event.date}`);
+                });
+            }
+        }
+
+        // --- BOTÕES DE AÇÃO ---
+        function copyLine(btn) {
+            const txt = btn.parentElement.parentElement.querySelector(".line-text").innerText.replace(/^\$ /, '');
+            navigator.clipboard.writeText(txt).then(() => {
+                const old = btn.innerText; btn.innerText = "OK"; setTimeout(() => btn.innerText = old, 1000);
+            });
+        }
+
+        function editLine(btn) {
+            const span = btn.parentElement.parentElement.querySelector(".line-text");
+            const newText = prompt("Editar linha:", span.innerText);
+            if (newText) { span.innerText = newText; saveContent(); }
+        }
+
+        function deleteThisLine(btn) {
+            if (confirm("Excluir esta linha?")) { btn.parentElement.parentElement.remove(); saveContent(); }
+        }
+
+        // --- CALENDÁRIO RECUPERADO ---
+        function displayCustomCalendar(year, month) {
+            const monthString = `${year}-${month.padStart(2, '0')}`;
+            let calendar = `<table border="1" style="border-collapse: collapse; width: 100%; text-align: center; background: white; color: black;">
+                             <tr><th colspan="7" style="background: #1a2a6c; color: white;">${monthString}</th></tr>
+                             <tr style="background: #eee;"><th>DOM</th><th>SEG</th><th>TER</th><th>QUA</th><th>QUI</th><th>SEX</th><th>SÁB</th></tr>`;
+
+            const firstDay = new Date(year, month - 1, 1).getDay();
+            const daysInMonth = new Date(year, month, 0).getDate();
+            let currentDay = 1;
+            
+            for (let i = 0; i < 6; i++) {
+                calendar += "<tr>";
+                for (let j = 0; j < 7; j++) {
+                    if (i === 0 && j < firstDay) {
+                        calendar += "<td></td>";
+                    } else if (currentDay <= daysInMonth) {
+                        calendar += `<td>${currentDay}</td>`;
+                        currentDay++;
+                    } else {
+                        calendar += "<td></td>";
+                    }
+                }
+                calendar += "</tr>";
+                if (currentDay > daysInMonth) break;
+            }
+            calendar += "</table>";
+            writeToTerminal(`$ Calendário:\n${calendar}`);
+        }
+
+        function saveToTextFile(fileName) {
+            const textContent = terminal.innerText;
+            const blob = new Blob([textContent], { type: "text/plain" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = fileName ? `${fileName}.txt` : "terminal_output.txt";
+            a.click();
+        }
+
+        function displayHelpManual() {
+            const manual = `
+                <strong>MANUAL DE COMANDOS:</strong><br>
+                - <strong>skin [1, 2, 3]</strong>: Troca o visual do app<br>
+                - <strong>sched "desc" dd/mm/aaaa</strong>: Agenda um evento<br>
+                - <strong>sched?</strong>: Mostra eventos agendados<br>
+                - <strong>sum [expressão]</strong>: Calcula matemática<br>
+                - <strong>del all</strong>: Apaga tudo<br>
+                - <strong>del [palavra]</strong>: Apaga linha com a palavra<br>
+                - <strong>save [nome]</strong>: Salva log em arquivo .txt<br>
+                - <strong>end [palavra]</strong>: Colore linha de cinza<br>
+                - <strong>red [palavra]</strong>: Colore linha de vermelho<br>
+                - <strong>date</strong>: Gera calendário (solicita ano e mês)<br>
+                - <strong>F2</strong>: Atalho para Data/Hora no campo de texto
+            `;
+            writeToTerminal(manual);
+        }
+
+        // --- NOTÍCIAS E ATALHOS ---
+        function fetchAndDisplayNews() {
+            const rssUrl = 'https://www.cnnbrasil.com.br/feed/';
+            fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`)
+                .then(res => res.json())
+                .then(data => {
+                    const div = document.getElementById('noticias');
+                    if (data.status === 'ok') {
+                        let html = '<ul>';
+                        data.items.slice(0, 10).forEach(item => {
+                            html += `<li><a href="${item.link}" target="_blank">● ${item.title}</a></li>`;
+                        });
+                        html += '</ul>';
+                        div.innerHTML = html;
+                    }
+                }).catch(() => { document.getElementById('noticias').innerHTML = 'Erro no feed.'; });
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "F2") {
+                const now = new Date();
+                const formattedDate = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')} ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')} `;
+                input.value = formattedDate + input.value;
+            }
+        });
+
+        fetchAndDisplayNews();
+        setInterval(fetchAndDisplayNews, 300000);
+    </script>
+</body>
+</html>
