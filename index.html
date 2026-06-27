@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>BackLogs | Work & Study</title>
+    <style id="theme-style">
+        /* Estilos serão injetados pelo JS */
+    </style>
+</head>
+<body>
+    <div id="terminal-container">
+        <div id="app-header" style="padding: 10px 0 0 7.5%; font-weight: bold; font-size: 20px; letter-spacing: 2px;">
+            BACKLOGS <span id="app-subtitle" style="font-weight: normal; font-size: 12px;">| Work & Study</span>
+        </div>
+        <div id="terminal"></div>
+        <input type="text" id="input" autofocus placeholder="Digite ajuda para ver os comandos...">
+    </div>
+
+    <h5 id="news-toggle" onclick="toggleNews()" style="cursor: pointer; user-select: none;">
+        Últimas Notícias - CNN Brasil <span id="news-indicator">[+]</span>
+    </h5>
+    <div id="noticias" style="display: none; padding-bottom: 50px;">Sincronizando feed...</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // Configurações do seu Firebase
+    const firebaseConfig = {
+        apiKey: "AIzaSyDbG1AVzQf4V-HeyH1MB8Ac8sMgNqmWLR0",
+  authDomain: "backlogs-b88cd.firebaseapp.com",
+  projectId: "backlogs-b88cd",
+  storageBucket: "backlogs-b88cd.firebasestorage.app",
+  messagingSenderId: "95227569310",
+  appId: "1:95227569310:web:93b8768076a5f91134078f",
+  measurementId: "G-WV2G4LBD2E"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const googleProvider = new GoogleAuthProvider();
+    let currentUser = null;
+
+    const terminal = document.getElementById("terminal");
+    const input = document.getElementById("input");
+    const styleTag = document.getElementById("theme-style");
+    
+    // Arrays de memória compartilhada com a nuvem
+    const scheduledEvents = [];
+    const todoList = [];
+    const lastCommands = [];
+    let commandIndex = 0;
+    let awaitingDateInput = false;
+    let pomodoroInterval = null;
+
+    // Definição das Skins (Incluindo a nova Skin 4 Unix Style)
+    const skins = {
+        1: { bg: "#F0F2f5", container: "white", text: "#2c3e50", primary: "#1a2a6c", inputBg: "#f8f9fa", border: "#dee2e6", lineBg: "#fafafa", marker: "#006400", hideUI: false },
+        2: { bg: "#1e1e1e", container: "#252526", text: "#d4d4d4", primary: "#4fc1ff", inputBg: "#333333", border: "#444444", lineBg: "#2d2d2d", marker: "#008b8b", hideUI: false },
+        3: { bg: "black", container: "#0a0a0a", text: "#00FF00", primary: "#00FF00", inputBg: "#111", border: "#00FF00", lineBg: "#050505", marker: "#00FF00", hideUI: false },
+        4: { bg: "#121212", container: "#121212", text: "#ffffff", primary: "#ffffff", inputBg: "#121212", border: "transparent", lineBg: "transparent", marker: "transparent", hideUI: true }
+    };
+
+    window.applySkin = function(id) {
+        const s = skins[id] || skins[1];
+        const isUnix = s.hideUI;
+
+        styleTag.innerHTML = `
+            body { background-color: ${s.bg}; font-family: ${isUnix ? "'Courier New', Courier, monospace" : "'Segoe UI', Tahoma, sans-serif"}; color: ${s.text}; margin: 0; padding: 0; transition: 0.3s; }
+            #terminal-container { position: relative; height: 85vh; background-color: ${s.container}; border-bottom: ${isUnix ? 'none' : `3px solid ${s.primary}`}; }
+            #app-header { color: ${s.primary}; display: ${isUnix ? 'none' : 'block'}; }
+            #terminal { width: 85%; margin: 0 auto; padding: 20px; background-color: ${s.container}; color: ${s.text}; position: absolute; top: ${isUnix ? '10px' : '45px'}; bottom: 60px; overflow: auto; font-size: 14px; }
+            #input { width: 85%; padding: 15px; background-color: ${s.inputBg}; color: ${s.primary}; border: none; border-top: ${isUnix ? 'none' : `1px solid ${s.border}`}; position: absolute; bottom: 0; left: 7.5%; outline: none; font-weight: bold; font-family: inherit; caret-color: ${s.primary}; }
+            h5 { margin-left: 7.5%; color: ${s.primary}; margin-top: 15px; font-size: 16px; border-left: 5px solid ${s.primary}; padding-left: 10px; display: ${isUnix ? 'none' : 'block'}; }
+            .line-item { border-bottom: ${isUnix ? 'none' : `1px solid ${s.border}`}; padding: ${isUnix ? '3px 0' : '8px 0'}; display: flex; align-items: center; justify-content: space-between; border-left: ${isUnix ? 'none' : `8px solid ${s.marker}`}; padding-left: ${isUnix ? '0' : '15px'}; margin-bottom: 5px; background-color: ${s.lineBg}; }
+            .line-text { flex-grow: 1; margin-right: 10px; }
+            .btn-group { display: ${isUnix ? 'none' : 'flex'}; }
+            .action-btn { background-color: ${s.inputBg}; color: ${s.primary}; font-size: 10px; border: 1px solid ${s.border}; padding: 4px 8px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: 4px; }
+            #noticias { width: 85%; margin: 0 auto; display: ${isUnix ? 'none !important' : 'none'}; }
+            table { border-collapse: collapse; background: ${isUnix ? '#222' : 'white'}; color: ${isUnix ? 'white' : 'black'}; margin: 10px 0; border: 1px solid ${isUnix ? '#444' : '#ccc'}; }
+            th, td { border: 1px solid ${isUnix ? '#444' : '#ccc'}; padding: 5px; text-align: center; }
+            .day-header { background: ${isUnix ? '#333' : '#eee'}; font-weight: bold; }
+        `;
+        localStorage.setItem("selectedSkin", id);
+        if(isUnix) {
+            document.getElementById("news-toggle").style.display = "none";
+        } else {
+            document.getElementById("news-toggle").style.display = "block";
+        }
+    }
+    applySkin(localStorage.getItem("selectedSkin") || 1);
+
+    // --- CONTROLE DE SESSÃO DO FIREBASE ---
+    onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            currentUser = user;
+            terminal.innerHTML = "";
+            writeToTerminalWithoutSaving(`$ [SISTEMA] Sincronizando dados de: ${user.email}...`);
+            await loadUserData(user.uid);
+        } else {
+            currentUser = null;
+            terminal.innerHTML = "";
+            writeToTerminalWithoutSaving("$ [SISTEMA] Desconectado. Use os comandos para entrar:");
+            writeToTerminalWithoutSaving("- registrar email senha");
+            writeToTerminalWithoutSaving("- logar email senha");
+            writeToTerminalWithoutSaving("- google");
+        }
+    });
+
+    // --- NOVA LÓGICA DE SALVAMENTO ATUALIZADA (Sincroniza Tudo) ---
+    async function saveContent() {
+        if (!currentUser) return;
+        const lines = [];
+        terminal.querySelectorAll('.line-text').forEach(el => {
+            if(!el.innerHTML.includes("[SISTEMA]") && !el.innerHTML.includes("Sincronizando") && !el.innerHTML.includes("Processando")) {
+                lines.push({ html: el.innerHTML, color: el.style.color || "" });
+            }
+        });
+
+        try {
+            await setDoc(doc(db, "users_data", currentUser.uid), {
+                terminalContent: lines,
+                scheduledEvents: scheduledEvents,
+                todoList: todoList,
+                selectedSkin: localStorage.getItem("selectedSkin") || "1"
+            });
+        } catch (e) {
+            console.error("Erro ao salvar na nuvem:", e);
+        }
+    }
+
+    async function loadUserData(uid) {
+        const docRef = doc(db, "users_data", uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            terminal.innerHTML = "";
+            writeToTerminalWithoutSaving(`$ Conectado como: ${currentUser.email}`);
+            
+            if(data.terminalContent) {
+                data.terminalContent.forEach(line => {
+                    writeToTerminalWithoutSaving(line.html, line.color);
+                });
+            }
+            if(data.scheduledEvents) {
+                scheduledEvents.length = 0;
+                scheduledEvents.push(...data.scheduledEvents);
+            }
+            if(data.todoList) {
+                todoList.length = 0;
+                todoList.push(...data.todoList);
+            }
+            if(data.selectedSkin) applySkin(data.selectedSkin);
+        }
+    }
+
+    // --- INTERCEPTADOR DE TECLADO BLINDADO ---
+    input.addEventListener("keydown", function(e) {
+        if (e.key === "ArrowUp") {
+            commandIndex = Math.max(0, commandIndex - 1);
+            input.value = lastCommands[commandIndex] || "";
+        } else if (e.key === "ArrowDown") {
+            commandIndex = Math.min(lastCommands.length, commandIndex + 1);
+            input.value = lastCommands[commandIndex] || "";
+        } else if (e.key === "Enter") {
+            const cmd = input.value; 
+            input.value = "";
+            if (!cmd.trim()) return;
+            
+            if (awaitingDateInput) {
+                const parts = cmd.split(" ");
+                displayCustomCalendar(parts[0], parts[1]);
+                awaitingDateInput = false;
+            } else {
+                if (cmd.startsWith("logar ") || cmd.startsWith("registrar ")) {
+                    writeToTerminalWithoutSaving("$ [SISTEMA] Processando credenciais ocultas...");
+                }
+                handleCommand(cmd);
+            }
+            
+            if (cmd.startsWith("logar ") || cmd.startsWith("registrar ")) {
+                const parts = cmd.split(" ");
+                lastCommands.push(`${parts[0]} ${parts[1]} *******`);
+            } else {
+                lastCommands.push(cmd);
+            }
+            commandIndex = lastCommands.length;
+        }
+    });
+
+    // --- INTERPRETADOR DE COMANDOS TOTALMENTE EM PT-BR ---
+    function handleCommand(cmd) {
+        const args = cmd.split(" ");
+        const primaryCmd = args[0];
+
+        if (cmd === "ajuda") displayHelpManual();
+        else if (cmd === "google") handleGoogleLogin();
+        else if (cmd.startsWith("registrar ")) handleRegister(cmd);
+        else if (cmd.startsWith("logar ")) handleLogin(cmd);
+        else if (cmd === "sair") handleLogout();
+        else if (cmd.startsWith("skin ")) applySkin(cmd.split(" ")[1]);
+        else if (cmd.startsWith("calc ")) calculateSum(cmd.substring(5));
+        else if (cmd === "limpar tudo") { terminal.innerHTML = ""; saveContent(); }
+        else if (cmd.startsWith("limpar ")) deleteByKeyword(cmd.substring(7));
+        else if (cmd.startsWith("vermelho ")) colorLine(cmd.substring(9), "red");
+        else if (cmd.startsWith("check ")) colorLine(cmd.substring(6), "grey"); // Substituiu 'end'
+        else if (cmd.startsWith("exportar ")) saveToFile(cmd.substring(9)); // Substituiu 'save'
+        else if (cmd.startsWith("agenda ")) handleSched(cmd); // Substituiu 'sched'
+        else if (cmd === "agenda?") showSched();
+        else if (cmd === "calendario") { awaitingDateInput = true; writeToTerminalWithoutSaving("$ Insira o ano e o mês (por exemplo, 'YYYY MM'):"); }
+        
+        // Novos comandos: Pomodoro e Tarefas
+        else if (cmd.startsWith("pomodoro ")) handlePomodoro(args[1]);
+        else if (cmd === "pomodoro parar") handlePomodoro("parar");
+        else if (cmd.startsWith("tarefa add ")) handleTodoAdd(cmd.substring(11));
+        else if (cmd.startsWith("tarefa check ")) handleTodoCheck(args[2]);
+        else if (cmd === "tarefas") handleTodoList();
+        
+        else {
+            if (cmd.startsWith("logar ") || cmd.startsWith("registrar ")) return; 
+
+            if (!currentUser) {
+                writeToTerminalWithoutSaving("$ [ERRO] Você precisa fazer login antes de digitar logs.");
+            } else {
+                writeToTerminal(cmd);
+            }
+        }
+    }
+
+    // --- FUNÇÕES COMPLEMENTARES ADAPTADAS ---
+    function writeToTerminal(text, color = "") {
+        writeToTerminalWithoutSaving(text, color);
+        saveContent();
+    }
+
+    function writeToTerminalWithoutSaving(text, color = "") {
+        const div = document.createElement("div");
+        div.className = "line-item";
+        
+        div.innerHTML = `<span class="line-text">${text}</span>
+            <div class="btn-group">
+                <button class="action-btn copy-btn">C</button>
+                <button class="action-btn edit-btn">E</button>
+                <button class="action-btn delete-btn" style="color:red">X</button>
+            </div>`;
+        
+        const lineText = div.querySelector('.line-text');
+        if(color) lineText.style.color = color;
+
+        div.querySelector('.copy-btn').addEventListener('click', () => {
+            navigator.clipboard.writeText(lineText.innerText);
+        });
+        div.querySelector('.delete-btn').addEventListener('click', () => { div.remove(); saveContent(); });
+        div.querySelector('.edit-btn').addEventListener('click', () => {
+            const v = prompt("Editar:", lineText.innerText); if (v) { lineText.innerText = v; saveContent(); }
+        });
+
+        terminal.appendChild(div);
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    // --- SISTEMA DE TAREFAS (TO-DO) ---
+    function handleTodoAdd(task) {
+        if(!task) return writeToTerminalWithoutSaving("$ [ERRO] Uso: tarefa add descrição da tarefa");
+        todoList.push({ task: task, done: false });
+        writeToTerminal(`$ [TAREFA] Adicionada: "${task}"`);
+    }
+
+    function handleTodoCheck(indexStr) {
+        const idx = parseInt(indexStr) - 1;
+        if(isNaN(idx) || !todoList[idx]) return writeToTerminalWithoutSaving("$ [ERRO] Índice inválido. Use: tarefa check [número]");
+        todoList[idx].done = true;
+        writeToTerminal(`$ [TAREFA] Concluída: "${todoList[idx].task}"`);
+    }
+
+    function handleTodoList() {
+        if(todoList.length === 0) return writeToTerminalWithoutSaving("$ Nenhuma tarefa pendente.");
+        writeToTerminalWithoutSaving("$ --- SUA LISTA DE TAREFAS ---");
+        todoList.forEach((t, i) => {
+            const status = t.done ? "[FEITO] ✔️" : "[PENDENTE]";
+            const color = t.done ? "grey" : "";
+            writeToTerminalWithoutSaving(`${i + 1}. ${status} ${t.task}`, color);
+        });
+    }
+
+    // --- TIMER POMODORO ---
+    function handlePomodoro(param) {
+        clearInterval(pomodoroInterval);
+        if(param === "parar") {
+            writeToTerminalWithoutSaving("$ [POMODORO] Timer interrompido.");
+            return;
+        }
+        let minutes = parseInt(param) || 25;
+        let seconds = 0;
+        writeToTerminalWithoutSaving(`$ [POMODORO] Timer iniciado para ${minutes} minutos. Foco total!`);
+        
+        pomodoroInterval = setInterval(() => {
+            if (seconds === 0) {
+                if (minutes === 0) {
+                    clearInterval(pomodoroInterval);
+                    writeToTerminal("$ [POMODORO] Tempo esgotado! Hora de descansar.");
+                    alert("Pomodoro Concluído!");
+                    return;
+                }
+                minutes--;
+                seconds = 59;
+            } else {
+                seconds--;
+            }
+            // Atualiza o subtítulo para mostrar o tempo discretamente
+            document.getElementById("app-subtitle").innerText = `| Pomodoro: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }, 1000);
+    }
+
+    // --- MÉTODOS ORIGINAIS ADAPTADOS ---
+    function calculateSum(expression) {
+        try {
+            const result = Function(`'use strict'; return (${expression})`)();
+            writeToTerminal(`$ Resultado: ${expression} = ${result}`);
+        } catch (error) { writeToTerminalWithoutSaving(`$ Erro: ${error}`); }
+    }
+
+    function handleSched(cmd) {
+        const m = cmd.match(/"([^"]+)" (\d{2}\/\d{2}\/\d{4})/);
+        if (m) {
+            scheduledEvents.push({ d: m[1], t: m[2] });
+            writeToTerminal(`$ Evento agendado: ${m[1]} em ${m[2]}`);
+        } else {
+            writeToTerminalWithoutSaving("$ Formato inválido. Use: agenda \"descrição\" dd/mm/aaaa");
+        }
+    }
+
+    function showSched() {
+        if (scheduledEvents.length === 0) writeToTerminalWithoutSaving("$ Não há eventos agendados.");
+        else {
+            writeToTerminalWithoutSaving("$ Eventos agendados:");
+            scheduledEvents.forEach(e => writeToTerminalWithoutSaving(`$ ${e.d} em ${e.t}`));
+        }
+    }
+
+    function deleteByKeyword(k) {
+        terminal.querySelectorAll('.line-item').forEach(l => { if (l.innerText.includes(k)) l.remove(); });
+        saveContent();
+    }
+
+    function colorLine(k, c) {
+        terminal.querySelectorAll('.line-text').forEach(s => { if (s.innerText.includes(k)) s.style.color = c; });
+        saveContent();
+    }
+
+    function saveToFile(n) {
+        const b = new Blob([terminal.innerText], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(b); a.download = (n || "backlogs_output") + ".txt"; a.click();
+    }
+
+    function displayCustomCalendar(year, month) {
+        const y = parseInt(year); const m = parseInt(month);
+        if(isNaN(y) || isNaN(m)) { writeToTerminalWithoutSaving("$ Erro: Ano ou Mês inválidos."); return; }
+        const monthString = `${y}-${m < 10 ? '0' : ''}${m}`;
+        let calendar = `<table><tr><th colspan="7">${monthString}</th></tr><tr><th class="day-header">DOM</th><th class="day-header">SEG</th><th class="day-header">TER</th><th class="day-header">QUA</th><th class="day-header">QUI</th><th class="day-header">SEX</th><th class="day-header">SÁB</th></tr>`;
+        const firstDay = new Date(y, m - 1, 1).getDay();
+        const daysInMonth = new Date(y, m, 0).getDate();
+        let currentDay = 1; let row = '<tr>';
+        for (let i = 0; i < firstDay; i++) { row += '<td></td>'; }
+        for (let i = firstDay; i < 7; i++) { if (currentDay <= daysInMonth) { row += `<td>${currentDay}</td>`; currentDay++; } }
+        row += '</tr>'; calendar += row;
+        while (currentDay <= daysInMonth) {
+            row = '<tr>';
+            for (let i = 0; i < 7; i++) { if (currentDay <= daysInMonth) { row += `<td>${currentDay}</td>`; currentDay++; } else { row += '<td></td>'; } }
+            row += '</tr>'; calendar += row;
+        }
+        calendar += '</table>';
+        writeToTerminal(`$ Calendário:\n${calendar}`);
+    }
+
+    // --- MÉTODOS DE AUTENTICAÇÃO REFINADOS ---
+    async function handleRegister(cmd) {
+        const parts = cmd.split(" "); const email = parts[1]; const password = parts[2];
+        if (!email || !password) return writeToTerminalWithoutSaving("$ [ERRO] Uso: registrar email senha");
+        try {
+            await createUserWithEmailAndPassword(auth, email, password);
+            writeToTerminalWithoutSaving("$ [SISTEMA] Conta criada com sucesso!");
+        } catch(err) { writeToTerminalWithoutSaving(`$ [ERRO] ${err.message}`); }
+    }
+
+    async function handleLogin(cmd) {
+        const parts = cmd.split(" "); const email = parts[1]; const password = parts[2];
+        if (!email || !password) return writeToTerminalWithoutSaving("$ [ERRO] Uso: logar email senha");
+        try { await signInWithEmailAndPassword(auth, email, password); } 
+        catch(err) { writeToTerminalWithoutSaving(`$ [ERRO] Credenciais inválidas.`); }
+    }
+
+    async function handleGoogleLogin() {
+        try { await signInWithPopup(auth, googleProvider); } 
+        catch (err) { writeToTerminalWithoutSaving(`$ [ERRO] Falha no Google Auth.`); }
+    }
+
+    async function handleLogout() { try { await signOut(auth); } catch(err) { console.error(err); } }
+
+    function displayHelpManual() {
+        const manual = `
+            <strong>Manual de Comandos (BackLogs BR):</strong><br>
+            - <strong>google</strong>: Login com a conta Google<br>
+            - <strong>registrar email senha</strong>: Cria uma conta na nuvem<br>
+            - <strong>logar email senha</strong>: Conecta ao seu perfil<br>
+            - <strong>sair</strong>: Desconecta a conta atual<br>
+            - <strong>skin [1, 2, 3, 4]</strong>: Altera o tema (Skin 4: UNIX Terminal Puro 🖥️)<br>
+            - <strong>tarefa add [texto]</strong>: Adiciona uma tarefa à sua lista<br>
+            - <strong>tarefas</strong>: Lista todas as suas tarefas e status<br>
+            - <strong>tarefa check [nº]</strong>: Marca a tarefa como concluída<br>
+            - <strong>pomodoro [minutos]</strong>: Inicia temporizador de foco (Ex: pomodoro 25)<br>
+            - <strong>pomodoro parar</strong>: Cancela o timer ativo<br>
+            - <strong>agenda "descrição" dd/mm/aaaa</strong>: Agenda compromissos<br>
+            - <strong>agenda?</strong>: Mostra eventos agendados<br>
+            - <strong>calc [expressão]</strong>: Executa contas matemáticas<br>
+            - <strong>calendario</strong>: Renderiza o calendário<br>
+            - <strong>check [palavra]</strong>: Colore a linha contendo a palavra de cinza (feito)<br>
+            - <strong>vermelho [palavra]</strong>: Colore a linha contendo a palavra de vermelho<br>
+            - <strong>limpar palavra</strong>: Remove linhas contendo o termo<br>
+            - <strong>limpar tudo</strong>: Reseta o terminal gráfico<br>
+            - <strong>exportar [nome]</strong>: Baixa o log local em formato .txt
+        `;
+        writeToTerminalWithoutSaving(manual);
+    }
+
+    // Atalho F2 mantido
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "F2") {
+            const now = new Date();
+            const formattedDate = `${(now.getDate() < 10 ? '0' : '') + now.getDate()}/${((now.getMonth() + 1) < 10 ? '0' : '') + (now.getMonth() + 1)} ${now.getHours()}:${(now.getMinutes() < 10 ? '0' : '') + now.getMinutes()} `;
+            input.value += formattedDate;
+        }
+    });
+
+    window.toggleNews = function() {
+        const div = document.getElementById("noticias");
+        const ind = document.getElementById("news-indicator");
+        const isOpen = div.style.display === "block";
+        div.style.display = isOpen ? "none" : "block";
+        ind.innerText = isOpen ? "[+]" : "[-]";
+        if (!isOpen) {
+            fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent('https://www.cnnbrasil.com.br/feed/')}`)
+                .then(r => r.json()).then(data => {
+                    let h = '<ul>';
+                    data.items.slice(0, 8).forEach(i => { h += `<li><a href="${i.link}" target="_blank">● ${i.title}</a></li>`; });
+                    document.getElementById('noticias').innerHTML = h + '</ul>';
+                }).catch(() => { document.getElementById('noticias').innerHTML = "Erro ao carregar feed."; });
+        }
+    }
+</script>
+</body>
+</html>
