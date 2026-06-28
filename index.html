@@ -7,6 +7,8 @@
     <style id="theme-style">
         /* Estilos dinâmicos serão injetados pelo JavaScript */
     </style>
+    <!-- Biblioteca SheetJS para leitura de planilhas Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
     <div id="terminal-container">
@@ -31,6 +33,7 @@
             <!-- Barra Deslizante de Atalhos Rápidos para Mobile -->
             <div id="quick-bar">
                 <button class="quick-btn" onclick="executeQuickCommand('ajuda')">❔ Ajuda</button>
+                <button class="quick-btn" onclick="executeQuickCommand('carregar arquivo')">📊 Planilha</button>
                 <button class="quick-btn" onclick="executeQuickCommand('prazos')">⏳ Prazos</button>
                 <button class="quick-btn" onclick="executeQuickCommand('tarefas')">📋 Tarefas</button>
                 <button class="quick-btn" onclick="executeQuickCommand('notas')">📝 Notas</button>
@@ -41,6 +44,9 @@
             <input type="text" id="input" autofocus placeholder="Digite ajuda para ver os comandos...">
         </div>
     </div>
+
+    <!-- Seletor oculto para importação de planilhas Excel -->
+    <input type="file" id="excel-file-input" style="display: none;" accept=".xlsx, .xls">
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -57,6 +63,7 @@
         measurementId: "G-WV2G4LBD2E"
     };
 
+    // Inicialização do Firebase
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
@@ -66,7 +73,9 @@
     const terminal = document.getElementById("terminal");
     const input = document.getElementById("input");
     const styleTag = document.getElementById("theme-style");
+    const excelFileInput = document.getElementById("excel-file-input");
     
+    // Arrays de memória sincronizada com a nuvem
     const scheduledEvents = [];
     const todoList = [];
     const monthlyDoneList = []; 
@@ -429,6 +438,46 @@
         return day;
     }
 
+    function isBusinessDay(date) {
+        const day = date.getDay();
+        if (day === 0 || day === 6) return false; // Fim de semana
+        
+        const formatted = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}`;
+        // Feriados Nacionais Brasileiros Básicos + Consciência Negra (20/11)
+        const holidays = [
+            "01/01", // Ano Novo
+            "21/04", // Tiradentes
+            "01/05", // Dia do Trabalho
+            "07/09", // Independência
+            "12/10", // Padroeira do Brasil
+            "02/11", // Finados
+            "15/11", // Proclamação da República
+            "20/11", // Consciência Negra
+            "25/12"  // Natal
+        ];
+        return !holidays.includes(formatted);
+    }
+
+    function getNextBusinessDay(date) {
+        let d = new Date(date);
+        do {
+            d.setDate(d.getDate() + 1);
+        } while (!isBusinessDay(d));
+        return d;
+    }
+
+    function addBusinessDays(date, days) {
+        let d = new Date(date);
+        let added = 0;
+        while (added < days) {
+            d.setDate(d.getDate() + 1);
+            if (isBusinessDay(d)) {
+                added++;
+            }
+        }
+        return d;
+    }
+
     function handleCommand(cmd) {
         const args = cmd.split(" ");
         const primaryCmd = args[0];
@@ -451,10 +500,23 @@
         else if (cmd.startsWith("pomodoro ")) handlePomodoro(args[1]);
         else if (cmd === "pomodoro parar") handlePomodoro("parar");
         
+        // Comando Excel
+        else if (cmd === "carregar arquivo") { excelFileInput.click(); writeToTerminalWithoutSaving("$ [SISTEMA] Seletor de planilhas aberto. Aguardando arquivo..."); }
+        
         // Novos Comandos de Prazos Gerais (Utilizando Ponto e Vírgula para separar em Evento / Agente / Resumo)
         else if (cmd.startsWith("prazo add ")) handleDeadlineAdd(cmd.substring(10));
-        else if (cmd.startsWith("prazo del ")) handleDeadlineDelete(args[2]);
-        else if (cmd === "prazos") handleDeadlineList();
+        else if (cmd.startsWith("prazo del ")) {
+            const param = cmd.substring(10).trim();
+            if (param === "expirados") {
+                handleDeadlineDeleteExpired();
+            } else {
+                handleDeadlineDelete(args[2]);
+            }
+        }
+        else if (primaryCmd === "prazos") {
+            const filter = args[1] || "";
+            handleDeadlineList(filter);
+        }
 
         // Comandos de Tarefas e Notas
         else if (cmd.startsWith("tarefa add ")) handleTodoAdd(cmd.substring(11));
@@ -520,10 +582,8 @@
     }
 
     function handleDeadlineAdd(rawParam) {
-        // Separa o texto por ponto e vírgula ";"
         const parts = rawParam.split(";").map(p => p.trim());
         
-        // Exige pelo menos as 4 informações necessárias: tempo, evento, agente, resumo
         if (parts.length < 4) {
             return writeToTerminalWithoutSaving("$ [ERRO] Formato correto: prazo add tempo ; Evento ; Agente ; Resumo (Use ponto e vírgula para separar as seções)");
         }
@@ -567,22 +627,60 @@
         writeToTerminal(`$ [PRAZO REMOVIDO] Evento "${removido[0].evento}" retirado do sistema.`);
     }
 
-    function handleDeadlineList() {
+    function handleDeadlineDeleteExpired() {
+        const now = new Date().getTime();
+        const initialLength = deadlinesList.length;
+        
+        for (let i = deadlinesList.length - 1; i >= 0; i--) {
+            if (deadlinesList[i].expirationTime <= now) {
+                deadlinesList.splice(i, 1);
+            }
+        }
+        const deletedCount = initialLength - deadlinesList.length;
+        writeToTerminal(`$ [SISTEMA] Limpeza concluída. ${deletedCount} prazo(s) expirado(s) removido(s) definitivamente.`);
+    }
+
+    function handleDeadlineList(filter = "") {
         if(deadlinesList.length === 0) return writeToTerminalWithoutSaving("$ Nenhum prazo ou evento monitorado no momento.");
         
         const now = new Date().getTime();
+        const filterStr = filter ? filter.trim().toLowerCase() : "";
 
-        // Mapeia e calcula a contagem regressiva em tempo real para ordenação
-        const calculatedList = deadlinesList.map((d, index) => {
+        // Criando mapeamento de tempo restante em segundos
+        let calculatedList = deadlinesList.map((d, index) => {
             const timeLeft = Math.max(0, Math.floor((d.expirationTime - now) / 1000));
             return { ...d, timeLeft, originalIndex: index };
         });
 
-        // Filtra e ordena do mais urgente (menor tempo restante) para o mais distante
-        calculatedList.sort((a, b) => a.timeLeft - b.timeLeft);
+        // Filtragem Inteligente
+        if (filterStr === "expirados") {
+            calculatedList = calculatedList.filter(d => d.timeLeft <= 0);
+        } else if (filterStr === "5d") {
+            calculatedList = calculatedList.filter(d => d.timeLeft > 0 && d.timeLeft <= 5 * 86400);
+        } else if (filterStr === "10d") {
+            calculatedList = calculatedList.filter(d => d.timeLeft > 0 && d.timeLeft <= 10 * 86400);
+        } else if (filterStr === "20d") {
+            calculatedList = calculatedList.filter(d => d.timeLeft > 0 && d.timeLeft <= 20 * 86400);
+        } else if (filterStr !== "") {
+            return writeToTerminalWithoutSaving(`$ [ERRO] Filtro inválido. Use: prazos [expirados / 5d / 10d / 20d]`);
+        }
 
-        writeToTerminalWithoutSaving("$ --- MONITORAMENTO DE PRAZOS ATIVOS ---");
-        calculatedList.forEach((d, i) => {
+        if (calculatedList.length === 0) {
+            return writeToTerminalWithoutSaving(`$ Nenhum prazo correspondente ao filtro "${filterStr}" no momento.`);
+        }
+
+        // Ordenação inteligente: expirados sempre em cima, depois mais urgentes
+        calculatedList.sort((a, b) => {
+            if (a.timeLeft === 0 && b.timeLeft === 0) return a.expirationTime - b.expirationTime;
+            if (a.timeLeft === 0) return -1;
+            if (b.timeLeft === 0) return 1;
+            return a.timeLeft - b.timeLeft;
+        });
+
+        const filterLabel = filterStr ? `[FILTRO: ${filterStr.toUpperCase()}]` : "[TODOS]";
+        writeToTerminalWithoutSaving(`$ --- MONITORAMENTO DE PRAZOS ATIVOS ${filterLabel} ---`);
+        
+        calculatedList.forEach((d) => {
             let timeString = "";
             if (d.timeLeft <= 0) {
                 timeString = "❌ PRAZO EXPIRADO!";
@@ -728,6 +826,188 @@
     async function handleGoogleLogin() { try { await signInWithPopup(auth, googleProvider); } catch(e) { console.error(e); } }
     async function handleLogout() { try { await signOut(auth); } catch(e) { console.error(e); } }
 
+    function safeParseDate(value) {
+        if (!value) return null;
+        if (value instanceof Date) {
+            return isNaN(value.getTime()) ? null : value;
+        }
+        
+        const slashRegex = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+        const matchSlash = String(value).trim().match(slashRegex);
+        if (matchSlash) {
+            return new Date(parseInt(matchSlash[3], 10), parseInt(matchSlash[2], 10) - 1, parseInt(matchSlash[1], 10));
+        }
+
+        const dashRegex = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
+        const matchDash = String(value).trim().match(dashRegex);
+        if (matchDash) {
+            return new Date(parseInt(matchDash[1], 10), parseInt(matchDash[2], 10) - 1, parseInt(matchDash[3], 10));
+        }
+
+        const numericVal = Number(value);
+        if (!isNaN(numericVal) && numericVal > 30000 && numericVal < 60000) {
+            return new Date((numericVal - 25569) * 86400 * 1000);
+        }
+
+        const standardParsed = new Date(value);
+        return isNaN(standardParsed.getTime()) ? null : standardParsed;
+    }
+
+    function processExcelData(records, sheetName) {
+        let addedCount = 0;
+        let ignoredCount = 0;
+        
+        writeToTerminalWithoutSaving(`$ [PLANILHA] Analisando aba [${sheetName}] com ${records.length} linha(s)...`);
+
+        records.forEach((row, idx) => {
+            let empenhoCol = null;
+            let fornecedorCol = null;
+            let confirmacaoCol = null;
+            let envioCol = null;
+
+            Object.keys(row).forEach(key => {
+                const k = key.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // Remove acentos
+                if (k.includes("empenho") || k === "n empenho" || k === "numero" || k === "cod") {
+                    empenhoCol = key;
+                } else if (k.includes("fornecedor") || k.includes("razao") || k === "agente" || k === "empresa") {
+                    fornecedorCol = key;
+                } else if (k.includes("confirma") || k.includes("recebimento") || k.includes("recebi")) {
+                    confirmacaoCol = key;
+                } else if (k.includes("envio") || k.includes("enviado") || k.includes("data de envio")) {
+                    envioCol = key;
+                }
+            });
+
+            if (!empenhoCol || !fornecedorCol) {
+                ignoredCount++;
+                return;
+            }
+
+            const empenhoVal = String(row[empenhoCol]).trim();
+            const fornecedorVal = String(row[fornecedorCol]).trim();
+            if (!empenhoVal || !fornecedorVal || empenhoVal === "undefined" || fornecedorVal === "undefined" || empenhoVal === "" || fornecedorVal === "") {
+                ignoredCount++;
+                return;
+            }
+
+            // Remove CNPJ e caracteres adicionais do nome do fornecedor
+            let cleanFornecedor = fornecedorVal;
+            if (fornecedorVal.includes(" - ")) {
+                const parts = fornecedorVal.split(" - ");
+                if (/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/.test(parts[0]) || /^\d+$/.test(parts[0].replace(/[\.\/\-]/g, ""))) {
+                    cleanFornecedor = parts.slice(1).join(" - ").trim();
+                }
+            }
+
+            const dateConfirmacao = confirmacaoCol ? safeParseDate(row[confirmacaoCol]) : null;
+            const dateEnvio = envioCol ? safeParseDate(row[envioCol]) : null;
+
+            let startBaseDate = null;
+            let logMethod = "";
+
+            if (dateConfirmacao) {
+                startBaseDate = getNextBusinessDay(dateConfirmacao);
+                logMethod = `Confirmado em ${dateConfirmacao.toLocaleDateString('pt-BR')}`;
+            } else if (dateEnvio) {
+                const estimatedArrival = addBusinessDays(dateEnvio, 5);
+                startBaseDate = getNextBusinessDay(estimatedArrival);
+                logMethod = `Enviado em ${dateEnvio.toLocaleDateString('pt-BR')} (Est. 5 dias úteis)`;
+            } else {
+                startBaseDate = getNextBusinessDay(new Date());
+                logMethod = "Sem data de envio/confirmação (Início hoje)";
+            }
+
+            let endCalculatedDate = new Date(startBaseDate);
+            endCalculatedDate.setDate(endCalculatedDate.getDate() + 20);
+
+            while (!isBusinessDay(endCalculatedDate)) {
+                endCalculatedDate.setDate(endCalculatedDate.getDate() + 1);
+            }
+
+            deadlinesList.push({
+                evento: `Empenho ${empenhoVal}`,
+                agente: cleanFornecedor,
+                resumo: `Gerado de forma automática via planilha MEJC (${sheetName}). Metodologia: ${logMethod}.`,
+                expirationTime: endCalculatedDate.getTime(),
+                createdAt: new Date().toLocaleDateString('pt-BR')
+            });
+
+            addedCount++;
+        });
+
+        return { addedCount, ignoredCount };
+    }
+
+    excelFileInput.addEventListener("change", function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            try {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                let totalAdded = 0;
+                let totalIgnored = 0;
+                let sheetsFound = 0;
+
+                writeToTerminalWithoutSaving(`$ [PLANILHA] Lendo arquivo: ${file.name}...`);
+
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    let headerIdx = -1;
+                    
+                    for (let i = 0; i < rows.length; i++) {
+                        if (rows[i] && rows[i].some(cell => String(cell).toLowerCase().includes("empenho"))) {
+                            headerIdx = i;
+                            break;
+                        }
+                    }
+
+                    if (headerIdx === -1) {
+                        return;
+                    }
+
+                    sheetsFound++;
+                    const headers = rows[headerIdx].map(h => String(h || "").trim());
+                    const jsonData = [];
+
+                    for (let i = headerIdx + 1; i < rows.length; i++) {
+                        const row = rows[i];
+                        if (!row || row.length === 0) continue;
+
+                        const hasData = row.some(cell => cell !== undefined && cell !== null && String(cell).trim() !== "");
+                        if (!hasData) continue;
+
+                        const record = {};
+                        headers.forEach((header, colIdx) => {
+                            if (header) {
+                                record[header] = row[colIdx];
+                            }
+                        });
+                        jsonData.push(record);
+                    }
+
+                    if (jsonData.length > 0) {
+                        const result = processExcelData(jsonData, sheetName);
+                        totalAdded += result.addedCount;
+                        totalIgnored += result.ignoredCount;
+                    }
+                });
+
+                if (sheetsFound === 0) {
+                    writeToTerminalWithoutSaving(`$ [ERRO PLANILHA] Não foi possível identificar os cabeçalhos de Empenho em nenhuma aba do arquivo.`, "#ff0000");
+                } else {
+                    writeToTerminal(`$ [PLANILHA CONCLUÍDA] Importados com sucesso das abas identificadas: ${totalAdded} prazo(s). Ignorados/Inválidos: ${totalIgnored}.`);
+                }
+            } catch (err) {
+                writeToTerminalWithoutSaving(`$ [ERRO EXCEL] Falha ao ler a planilha: ${err.message}`, "#ff0000");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
     function displayHelpManual() {
         writeToTerminalWithoutSaving(`
             <strong>Manual de Comandos (BackLogs BR):</strong><br>
@@ -737,17 +1017,25 @@
             - <strong>sair</strong>: Desconecta a conta atual<br>
             - <strong>skin [1-12]</strong>: Troca o tema (8: Matrix, 11: DOS, 12: Cyberpunk)<br>
             <br>
+            <strong>INTEGRAÇÃO PLANILHAS EXCEL (MEJC):</strong><br>
+            - <strong>carregar arquivo</strong>: Abre janela para selecionar sua planilha. Cada linha correspondente gera prazos inteligentes automáticos de 20 dias uteis com as regras regulamentares da maternidade.<br>
+            <br>
             <strong>GESTÃO DE PRAZOS (CONTAGEM REGRESSIVA GERAL):</strong><br>
             - <strong>prazo add [tempo] ; [Evento] ; [Agente] ; [Resumo]</strong>: Adiciona prazo regressivo sem aspas (separado por ponto e vírgula).<br>
               <em>Exemplo: prazo add 20d ; Apresentação TCC ; Professor Orientador ; Entrega final de slides</em><br>
               <em>Exemplo: prazo add 12h ; Ajuste de Servidor ; Suporte Técnico ; Substituição de hardware de rede</em><br>
             - <strong>prazo del [nº]</strong>: Remove o prazo selecionado da lista<br>
+            - <strong>prazo del expirados</strong>: Deleta todos os prazos expirados da lista de uma vez só 🧹<br>
             - <strong>prazos</strong>: Exibe todos os prazos ativos ordenados do mais urgente ao mais distante<br>
+            - <strong>prazos expirados</strong>: Filtra e exibe somente os prazos que já estão expirados ❌<br>
+            - <strong>prazos 5d</strong>: Filtra os prazos vencendo em até 5 dias ⏳<br>
+            - <strong>prazos 10d</strong>: Filtra os prazos vencendo em até 10 dias 📅<br>
+            - <strong>prazos 20d</strong>: Filtra os prazos vencendo em até 20 dias 📊<br>
             <br>
             <strong>OUTROS COMANDOS:</strong><br>
             - <strong>nota add [texto] | nota del [nº] | notas</strong>: Gestão de anotações rápidas<br>
-            - <strong>tarefa add [texto] | tarefa check [nº] | tarefas</strong>: Planeamento semanal básico<br>
-            - <strong>tarefas concluidas</strong>: Histórico acumulado do mês<br>
+            - <strong>tarefa add [texto] | tarefa check [nº] | tarefas</strong>: Planeamento semanal básico (limpeza automática sáb-seg)<br>
+            - <strong>tarefas concluidas</strong>: Histórico acumulado de tarefas concluídas no mês<br>
             - <strong>pomodoro [minutos]</strong>: Temporizador tradicional (suporta s, m, h, d)<br>
             - <strong>exportar [nome]</strong>: Baixa o log em .txt do terminal gráfico
         `);
