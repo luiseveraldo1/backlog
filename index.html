@@ -31,8 +31,8 @@
             <!-- Barra Deslizante de Atalhos Rápidos para Mobile -->
             <div id="quick-bar">
                 <button class="quick-btn" onclick="executeQuickCommand('ajuda')">❔ Ajuda</button>
+                <button class="quick-btn" onclick="executeQuickCommand('prazos')">⏳ Prazos</button>
                 <button class="quick-btn" onclick="executeQuickCommand('tarefas')">📋 Tarefas</button>
-                <button class="quick-btn" onclick="executeQuickCommand('tarefas concluidas')">✅ Concluídas</button>
                 <button class="quick-btn" onclick="executeQuickCommand('notas')">📝 Notas</button>
                 <button class="quick-btn" onclick="executeQuickCommand('F2')">📅 Data/Hora</button>
                 <button class="quick-btn" onclick="cycleSkins()">🎨 Temas</button>
@@ -57,7 +57,6 @@
         measurementId: "G-WV2G4LBD2E"
     };
 
-    // Inicialização das instâncias do Firebase
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
@@ -68,17 +67,16 @@
     const input = document.getElementById("input");
     const styleTag = document.getElementById("theme-style");
     
-    // Arrays de memória partilhada com a nuvem
     const scheduledEvents = [];
     const todoList = [];
     const monthlyDoneList = []; 
     const notesList = [];
+    const deadlinesList = []; // Lista para monitoramento geral de prazos ativos (Eventos / Agentes)
     const lastCommands = [];
     let commandIndex = 0;
     let awaitingDateInput = false;
     let pomodoroInterval = null;
 
-    // Configuração das 12 Skins clássicas e nostálgicas
     const skins = {
         1: { bg: "#F0F2f5", container: "white", text: "#2c3e50", primary: "#1a2a6c", inputBg: "#f8f9fa", border: "#dee2e6", lineBg: "#fafafa", marker: "#006400", hideUI: false },
         2: { bg: "#1e1e1e", container: "#252526", text: "#d4d4d4", primary: "#4fc1ff", inputBg: "#333333", border: "#444444", lineBg: "#2d2d2d", marker: "#008b8b", hideUI: false },
@@ -94,7 +92,6 @@
         12: { bg: "#050505", container: "#050505", text: "#ffb000", primary: "#ffb000", inputBg: "#050505", border: "transparent", lineBg: "transparent", marker: "transparent", hideUI: true } 
     };
 
-    // Motor de Renderização de Estilos Responsivos
     window.applySkin = function(id) {
         const s = skins[id] || skins[1];
         const isUnix = s.hideUI;
@@ -281,7 +278,7 @@
                 font-size: 12px;
             }
             
-            /* Ajustes finos para ecrãs pequenos (Mobile) */
+            /* Ajustes finos para telas de telemóvel */
             @media (max-width: 600px) {
                 #terminal-container {
                     height: 100dvh;
@@ -311,7 +308,6 @@
     
     applySkin(localStorage.getItem("selectedSkin") || 1);
 
-    // Gestão de Sessão do Firebase
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
@@ -337,7 +333,7 @@
         try {
             await setDoc(doc(db, "users_data", currentUser.uid), {
                 terminalContent: lines,
-                scheduledEvents, todoList, monthlyDoneList, notesList,
+                scheduledEvents, todoList, monthlyDoneList, notesList, deadlinesList,
                 selectedSkin: localStorage.getItem("selectedSkin") || "1"
             });
         } catch (e) { console.error(e); }
@@ -365,6 +361,9 @@
                 
                 notesList.length = 0;
                 if(data.notesList) notesList.push(...data.notesList);
+
+                deadlinesList.length = 0;
+                if(data.deadlinesList) deadlinesList.push(...data.deadlinesList);
                 
                 if(data.selectedSkin) applySkin(data.selectedSkin);
             }
@@ -373,7 +372,6 @@
         }
     }
 
-    // Automações de Arquivamento (Sábado a Segunda) e Reset (5º Dia Útil)
     function checkAndRunAutomations() {
         if (!currentUser) return;
         const now = new Date();
@@ -431,7 +429,6 @@
         return day;
     }
 
-    // Interpretador de Comandos do Terminal
     function handleCommand(cmd) {
         const args = cmd.split(" ");
         const primaryCmd = args[0];
@@ -453,6 +450,13 @@
         else if (cmd === "calendario") { awaitingDateInput = true; writeToTerminalWithoutSaving("$ Digite: ANO MÊS"); }
         else if (cmd.startsWith("pomodoro ")) handlePomodoro(args[1]);
         else if (cmd === "pomodoro parar") handlePomodoro("parar");
+        
+        // Novos Comandos de Prazos Gerais (Utilizando Ponto e Vírgula para separar em Evento / Agente / Resumo)
+        else if (cmd.startsWith("prazo add ")) handleDeadlineAdd(cmd.substring(10));
+        else if (cmd.startsWith("prazo del ")) handleDeadlineDelete(args[2]);
+        else if (cmd === "prazos") handleDeadlineList();
+
+        // Comandos de Tarefas e Notas
         else if (cmd.startsWith("tarefa add ")) handleTodoAdd(cmd.substring(11));
         else if (cmd.startsWith("tarefa check ")) handleTodoCheck(args[2]);
         else if (cmd === "tarefas") handleTodoList();
@@ -461,12 +465,11 @@
         else if (cmd.startsWith("nota del ")) handleNoteDelete(args[2]);
         else if (cmd === "notas") handleNoteList();
         else {
-            if (!currentUser) writeToTerminalWithoutSaving("$ [ERRO] Faça login.");
+            if (!currentUser) writeToTerminalWithoutSaving("$ [SISTEMA] Faça login.");
             else writeToTerminal(cmd);
         }
     }
 
-    // Utilitários Globais expostos para os botões de atalho mobile
     window.executeQuickCommand = function(cmd) {
         const inputEl = document.getElementById("input");
         if (cmd === 'F2') {
@@ -504,13 +507,105 @@
             </div>`;
         const lineText = div.querySelector('.line-text');
         if(color) lineText.style.color = color;
-        div.querySelector('.copy-btn').addEventListener('click', () => navigator.clipboard.writeText(lineText.innerText));
+        div.querySelector('.copy-btn').addEventListener('click', () => {
+            document.execCommand('copy');
+            navigator.clipboard.writeText(lineText.innerText).catch(() => {});
+        });
         div.querySelector('.delete-btn').addEventListener('click', () => { div.remove(); saveContent(); });
         div.querySelector('.edit-btn').addEventListener('click', () => {
             const v = prompt("Editar:", lineText.innerText); if (v) { lineText.innerText = v; saveContent(); }
         });
         terminal.appendChild(div);
         terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function handleDeadlineAdd(rawParam) {
+        // Separa o texto por ponto e vírgula ";"
+        const parts = rawParam.split(";").map(p => p.trim());
+        
+        // Exige pelo menos as 4 informações necessárias: tempo, evento, agente, resumo
+        if (parts.length < 4) {
+            return writeToTerminalWithoutSaving("$ [ERRO] Formato correto: prazo add tempo ; Evento ; Agente ; Resumo (Use ponto e vírgula para separar as seções)");
+        }
+
+        const durationStr = parts[0];
+        const evento = parts[1];
+        const agente = parts[2];
+        const resumo = parts[3];
+
+        let totalSeconds = 0;
+        let cleanParam = durationStr.toLowerCase();
+        
+        if (cleanParam.endsWith("s")) {
+            totalSeconds = parseInt(cleanParam) || 10;
+        } else if (cleanParam.endsWith("h")) {
+            totalSeconds = (parseInt(cleanParam) || 1) * 3600;
+        } else if (cleanParam.endsWith("d")) {
+            totalSeconds = (parseInt(cleanParam) || 1) * 86400;
+        } else {
+            totalSeconds = (parseInt(cleanParam) || 25) * 60; // Padrão minutos
+        }
+
+        const now = new Date();
+        const expirationTime = now.getTime() + (totalSeconds * 1000);
+
+        deadlinesList.push({
+            evento,
+            agente,
+            resumo,
+            expirationTime,
+            createdAt: now.toLocaleDateString('pt-BR')
+        });
+
+        writeToTerminal(`$ [PRAZO REGISTRADO] Evento: ${evento} | Agente: ${agente} | Tempo: ${durationStr}`);
+    }
+
+    function handleDeadlineDelete(idxStr) {
+        const idx = parseInt(idxStr) - 1;
+        if(isNaN(idx) || !deadlinesList[idx]) return writeToTerminalWithoutSaving("$ [ERRO] Índice inválido.");
+        const removido = deadlinesList.splice(idx, 1);
+        writeToTerminal(`$ [PRAZO REMOVIDO] Evento "${removido[0].evento}" retirado do sistema.`);
+    }
+
+    function handleDeadlineList() {
+        if(deadlinesList.length === 0) return writeToTerminalWithoutSaving("$ Nenhum prazo ou evento monitorado no momento.");
+        
+        const now = new Date().getTime();
+
+        // Mapeia e calcula a contagem regressiva em tempo real para ordenação
+        const calculatedList = deadlinesList.map((d, index) => {
+            const timeLeft = Math.max(0, Math.floor((d.expirationTime - now) / 1000));
+            return { ...d, timeLeft, originalIndex: index };
+        });
+
+        // Filtra e ordena do mais urgente (menor tempo restante) para o mais distante
+        calculatedList.sort((a, b) => a.timeLeft - b.timeLeft);
+
+        writeToTerminalWithoutSaving("$ --- MONITORAMENTO DE PRAZOS ATIVOS ---");
+        calculatedList.forEach((d, i) => {
+            let timeString = "";
+            if (d.timeLeft <= 0) {
+                timeString = "❌ PRAZO EXPIRADO!";
+            } else {
+                let days = Math.floor(d.timeLeft / 86400);
+                let hours = Math.floor((d.timeLeft % 86400) / 3600);
+                let mins = Math.floor((d.timeLeft % 3600) / 60);
+                let secs = d.timeLeft % 60;
+                
+                if (days > 0) timeString += `${days}d `;
+                if (hours > 0 || days > 0) timeString += `${hours}h `;
+                if (mins > 0 || hours > 0 || days > 0) timeString += `${mins}m `;
+                timeString += `${secs}s`;
+            }
+
+            const output = `<strong>[ID: ${d.originalIndex + 1}]</strong> Evento: ${d.evento}<br>` +
+                           `   • Agente: ${d.agente}<br>` +
+                           `   • Resumo: ${d.resumo}<br>` +
+                           `   • Registrado em: ${d.createdAt}<br>` +
+                           `   • Tempo Restante: <span style="color: #ff8000; font-weight: bold;">${timeString}</span>`;
+            
+            writeToTerminalWithoutSaving(output, d.timeLeft <= 0 ? "#ff0000" : "");
+        });
     }
 
     function handleTodoAdd(task) {
@@ -562,18 +657,46 @@
 
     function handlePomodoro(p) {
         clearInterval(pomodoroInterval);
-        if(p === "parar") return writeToTerminalWithoutSaving("$ Pomodoro parado.");
-        let m = parseInt(p) || 25; let s = 0;
-        writeToTerminalWithoutSaving(`$ Timer de ${m} min iniciado.`);
+        if(p === "parar") {
+            document.getElementById("app-subtitle").innerText = "| Work & Study";
+            return writeToTerminalWithoutSaving("$ Pomodoro parado.");
+        }
+        
+        let totalSeconds = 0;
+        let cleanParam = p.trim().toLowerCase();
+        
+        if (cleanParam.endsWith("s")) {
+            totalSeconds = parseInt(cleanParam) || 10;
+        } else if (cleanParam.endsWith("h")) {
+            totalSeconds = (parseInt(cleanParam) || 1) * 3600;
+        } else if (cleanParam.endsWith("d")) {
+            totalSeconds = (parseInt(cleanParam) || 1) * 86400;
+        } else {
+            totalSeconds = (parseInt(cleanParam) || 25) * 60;
+        }
+        
+        writeToTerminalWithoutSaving(`$ Temporizador de ${p} iniciado. Foco total!`);
+        
         pomodoroInterval = setInterval(() => {
-            if (s === 0) {
-                if (m === 0) {
-                    clearInterval(pomodoroInterval);
-                    writeToTerminal("$ Concluído!"); alert("Fim do Pomodoro!"); return;
-                }
-                m--; s = 59;
-            } else s--;
-            document.getElementById("app-subtitle").innerText = `| Pomodoro: ${m}:${s < 10 ? '0' : ''}${s}`;
+            if (totalSeconds <= 0) {
+                clearInterval(pomodoroInterval);
+                writeToTerminal("$ [SISTEMA] Temporizador do Pomodoro finalizado! Bom trabalho."); 
+                document.getElementById("app-subtitle").innerText = "| Work & Study";
+                return;
+            }
+            totalSeconds--;
+            
+            let d = Math.floor(totalSeconds / 86400);
+            let h = Math.floor((totalSeconds % 86400) / 3600);
+            let m = Math.floor((totalSeconds % 3600) / 60);
+            let s = totalSeconds % 60;
+            
+            let timeString = "";
+            if (d > 0) timeString += `${d}d `;
+            if (h > 0 || d > 0) timeString += `${h}h `;
+            timeString += `${m}:${s < 10 ? '0' : ''}${s}`;
+            
+            document.getElementById("app-subtitle").innerText = `| Pomodoro: ${timeString}`;
         }, 1000);
     }
 
@@ -612,25 +735,21 @@
             - <strong>registrar email senha</strong>: Cria uma nova conta<br>
             - <strong>logar email senha</strong>: Conecta ao seu perfil<br>
             - <strong>sair</strong>: Desconecta a conta atual<br>
-            - <strong>skin [1-12]</strong>: Troca o tema (4: Unix Dark, 5: Unix Light, 8: Matrix, 11: DOS)<br>
-            - <strong>nota add [texto]</strong>: Adiciona anotação rápida ao Bloco de Notas<br>
-            - <strong>nota del [nº]</strong>: Deleta nota permanentemente da lista<br>
-            - <strong>notas</strong>: Ver todas as suas notas salvas na nuvem<br>
-            - <strong>tarefa add [texto]</strong>: Cria nova tarefa semanal<br>
-            - <strong>tarefa check [nº]</strong>: Conclui tarefa (Ativa o histórico)<br>
-            - <strong>tarefas</strong>: Ver tarefas ativas (Auto-limpeza Sábado-Segunda 🧹)<br>
-            - <strong>tarefas concluidas</strong>: Histórico do mês (Auto-limpeza no 5º dia útil)<br>
-            - <strong>pomodoro [min]</strong>: Timer de foco (Ex: pomodoro 25)<br>
-            - <strong>pomodoro parar</strong>: Para temporizador ativo<br>
-            - <strong>agenda "descrição" dd/mm/aaaa</strong>: Agenda compromissos<br>
-            - <strong>agenda?</strong>: Mostra eventos agendados<br>
-            - <strong>calc [expressão]</strong>: Executa contas matemáticas<br>
-            - <strong>calendario</strong>: Renderiza o calendário<br>
-            - <strong>check [palavra]</strong>: Colore linha com a palavra de cinza (feito)<br>
-            - <strong>vermelho [palavra]</strong>: Colore linha de vermelho<br>
-            - <strong>limpar palavra</strong>: Remove linhas que contenham a palavra<br>
-            - <strong>limpar tudo</strong>: Reseta a tela do terminal gráfico<br>
-            - <strong>exportar [nome]</strong>: Baixa o log em .txt
+            - <strong>skin [1-12]</strong>: Troca o tema (8: Matrix, 11: DOS, 12: Cyberpunk)<br>
+            <br>
+            <strong>GESTÃO DE PRAZOS (CONTAGEM REGRESSIVA GERAL):</strong><br>
+            - <strong>prazo add [tempo] ; [Evento] ; [Agente] ; [Resumo]</strong>: Adiciona prazo regressivo sem aspas (separado por ponto e vírgula).<br>
+              <em>Exemplo: prazo add 20d ; Apresentação TCC ; Professor Orientador ; Entrega final de slides</em><br>
+              <em>Exemplo: prazo add 12h ; Ajuste de Servidor ; Suporte Técnico ; Substituição de hardware de rede</em><br>
+            - <strong>prazo del [nº]</strong>: Remove o prazo selecionado da lista<br>
+            - <strong>prazos</strong>: Exibe todos os prazos ativos ordenados do mais urgente ao mais distante<br>
+            <br>
+            <strong>OUTROS COMANDOS:</strong><br>
+            - <strong>nota add [texto] | nota del [nº] | notas</strong>: Gestão de anotações rápidas<br>
+            - <strong>tarefa add [texto] | tarefa check [nº] | tarefas</strong>: Planeamento semanal básico<br>
+            - <strong>tarefas concluidas</strong>: Histórico acumulado do mês<br>
+            - <strong>pomodoro [minutos]</strong>: Temporizador tradicional (suporta s, m, h, d)<br>
+            - <strong>exportar [nome]</strong>: Baixa o log em .txt do terminal gráfico
         `);
     }
 
